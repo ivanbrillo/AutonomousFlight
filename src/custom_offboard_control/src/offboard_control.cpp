@@ -113,65 +113,54 @@ void CustomOffboardControl::publish_offboard_control_mode()
 void CustomOffboardControl::publish_trajectory_setpoint()
 {
     TrajectorySetpoint msg{};
-
     static std::array<float,3> target{0.0,0.0,-5.0};
+    static int stable_counter = 0;   // contatore di stabilità
+    const int STABLE_THRESHOLD = 20; // numero di cicli (20*100ms ≈ 2s)
 
     if (offboard_setpoint_counter_ > 10) {
         if (reached_position(target)) {
-            mission_state_++;
-            RCLCPP_INFO(this->get_logger(), "Reached target → moving to mission state: %d", mission_state_);
-            switch (mission_state_) {
-                case 0: target = {0.0, 0.0, -5.0}; break;
-                case 1: target = {0.0, 1.0, -5.0}; break;
-                case 2: target = {1.0, 1.0, -5.0}; break;
-                case 3: target = {1.0, 0.0, -5.0}; break;
-                case 4: target = {0.0, 0.0, -5.0}; break;
-                case 5: target = {0.0, 0.0, 0.0}; break;
+            stable_counter++;
+            if (stable_counter >= STABLE_THRESHOLD) {
+                mission_state_++;
+                stable_counter = 0;
+                RCLCPP_INFO(this->get_logger(), "Reached target and stabilized → moving to mission state: %d", mission_state_);
+                switch (mission_state_) {
+                    case 0: target = {0.0, 0.0, -5.0}; break;
+                    case 1: target = {0.0, 1.0, -5.0}; break;
+                    case 2: target = {1.0, 1.0, -5.0}; break;
+                    case 3: target = {1.0, 0.0, -5.0}; break;
+                    case 4: target = {0.0, 0.0, -5.0}; break;
+                    case 5: target = {0.0, 0.0, 0.0}; break;
+                }
             }
+        } else {
+            stable_counter = 0; // reset se si allontana
         }
     }
 
     msg.position = target;
     msg.yaw = 0.0;
-    
+
     switch (mission_state_) {
-        case 0: // Takeoff and hover at starting position
-        msg.position = {0.0, 0.0, -5.0};
-        msg.yaw = 0.0;
-        break;
-        case 1: // Move 1m to the left
-        msg.position = {0.0, 1.0, -5.0};
-        msg.yaw = 0.0;
-        break;
-        case 2: // Move 1m forward
-        msg.position = {1.0, 1.0, -5.0};
-        msg.yaw = 0.0;
-        break;
-        case 3: // Move 1m to the right
-        msg.position = {1.0, 0.0, -5.0};
-        msg.yaw = 0.0;
-        break;
-        case 4: // Move 1m back (return to start position)
-        msg.position = {0.0, 0.0, -5.0};
-        msg.yaw = 0.0;
-        break;
-        case 5: // Land
-        msg.position = {0.0, 0.0, 0.0};
-        msg.yaw = 0.0;
-        if (state_counter_ == 1) { // Send land command once
-            this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_NAV_LAND);
-            RCLCPP_INFO(this->get_logger(), "Landing command sent");
-        }
-        break;
-        default: // Mission complete, maintain last position
-        msg.position = {0.0, 0.0, 0.0};
-        msg.yaw = 0.0;
-        break;
+        case 0: msg.position = {0.0, 0.0, -5.0}; break;
+        case 1: msg.position = {0.0, 1.0, -5.0}; break;
+        case 2: msg.position = {1.0, 1.0, -5.0}; break;
+        case 3: msg.position = {1.0, 0.0, -5.0}; break;
+        case 4: msg.position = {0.0, 0.0, -5.0}; break;
+        case 5:
+            msg.position = {0.0, 0.0, 0.0};
+            if (state_counter_ == 1) {
+                this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_NAV_LAND);
+                RCLCPP_INFO(this->get_logger(), "Landing command sent");
+            }
+            break;
+        default: msg.position = {0.0, 0.0, 0.0}; break;
     }
-    
+
     msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
     trajectory_setpoint_publisher_->publish(msg);
 }
+
 
 void CustomOffboardControl::publish_vehicle_command(uint16_t command, float param1, float param2)
 {
