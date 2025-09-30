@@ -12,6 +12,28 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
 
+using px4_msgs::msg::VehicleLocalPosition;
+
+rclcpp::Subscription<VehicleLocalPosition>::SharedPtr local_position_sub_;
+VehicleLocalPosition current_position_;
+
+local_position_sub_ = this->create_subscription<VehicleLocalPosition>(
+    "/fmu/out/vehicle_local_position",
+    10,
+    [this](const VehicleLocalPosition::SharedPtr msg) {
+        current_position_ = *msg;
+    }
+);
+
+bool reached_position(const std::array<float,3>& target, float tolerance=0.2f) {
+    float dx = current_position_.x - target[0];
+    float dy = current_position_.y - target[1];
+    float dz = current_position_.z - target[2];
+    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+    return dist < tolerance;
+}
+
+
 class CustomOffboardControl : public rclcpp::Node
 {
     public:
@@ -91,18 +113,26 @@ void CustomOffboardControl::publish_offboard_control_mode()
 void CustomOffboardControl::publish_trajectory_setpoint()
 {
     TrajectorySetpoint msg{};
-    
-    // Only start mission after offboard mode is established
+
+    static std::array<float,3> target{0.0,0.0,-5.0};
+
     if (offboard_setpoint_counter_ > 10) {
-        state_counter_++;
-        
-        // Each state lasts for 50 cycles (5 seconds at 100ms intervals)
-        if (state_counter_ >= 50 && mission_state_ < 5) {
-            state_counter_ = 0;
+        if (reached_position(target)) {
             mission_state_++;
-            RCLCPP_INFO(this->get_logger(), "Moving to mission state: %d", mission_state_);
+            RCLCPP_INFO(this->get_logger(), "Reached target → moving to mission state: %d", mission_state_);
+            switch (mission_state_) {
+                case 0: target = {0.0, 0.0, -5.0}; break;
+                case 1: target = {0.0, 1.0, -5.0}; break;
+                case 2: target = {1.0, 1.0, -5.0}; break;
+                case 3: target = {1.0, 0.0, -5.0}; break;
+                case 4: target = {0.0, 0.0, -5.0}; break;
+                case 5: target = {0.0, 0.0, 0.0}; break;
+            }
         }
     }
+
+    msg.position = target;
+    msg.yaw = 0.0;
     
     switch (mission_state_) {
         case 0: // Takeoff and hover at starting position
